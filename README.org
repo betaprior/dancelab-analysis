@@ -1,0 +1,18 @@
+* DanceLab analysis
+
+This is the code being currently used to analyze the acceleration/gyroscope data
+collected by the DanceLab Android app.  The dance-science.org file details
+the analysis workflow (assuming concrete data files as input; the data files
+aren't provided yet).
+
+Video generation scripts are currently in the quick hack stage, and be
+forewarned that cross-correlation does not always correctly align the audio
+data.  
+
+Furthermore, it cannot be taken for granted that audio and sensor data start
+at the same time. The offset between them can reach a few hundred ms (data
+leads audio).  Thus, when collecting data it's currently necessary to
+"timestamp" the audio and sensor streams by bumping the phones together.  The
+audio/sensor stream offsets can then be found by manually looking at the
+peaks in the data.  Note that Audacity is a good tool to examine/manipulate
+audio streams.

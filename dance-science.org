@@ -1,0 +1,211 @@
+#+TITLE: Dance movement data analysis
+#+AUTHOR: Leo Alekseyev
+#+STARTUP: noindent
+
+
+* Salsa
+
+** First experiment
+Data collected 20120308 at Purdue with Andrea Vacca and Jenny Chen 
+
+Data directory:
+[[file:data/salsa/20120308_av_jc][file:~/projects/dance_science/expt/data/salsa/20120308_av_jc]]
+
+For song 1, Jenny was using her Epic 4G, which produced angular velocity data
+at a very low resolution; for song 2, she danced with the Nexus S and Andrea
+danced with Galaxy Nexus.  The analysis will first focus on Song 2 since it's
+reasonable to believe that the dataset is more complete.
+
+*** Song 2
+[[file:data/salsa/20120308_av_jc/song2/av.nfo][Metadata (lead)]]
+155515 ms
+[[file:data/salsa/20120308_av_jc/song2/jc.nfo][Metadata (follow)]]
+136044 ms
+
+[[shell:mplayer%20-identify%20-frames%200%20data/salsa/20120308_av_jc/song2/av.3gp][mplayer audio metadata (lead)]]
+
+
+Get WAV files for the 3 sources:
+
+#+begin_src sh :tangle code/get_wavs.sh :shebang #!/bin/bash
+  for fn_in in "$@"; do
+      fn_out=$(sed -e 's|\.3gp$||g' -e 's|$|.wav|g' <<< $fn_in)
+      ffmpeg -i $fn_in -vn -f wav -acodec pcm_u8 $fn_out
+  done
+#+end_src
+
+#+begin_src sh :results output silent
+  code/get_wavs.sh data/salsa/20120308_av_jc/song2/*.3gp
+#+end_src
+
+
+Sampling rates in the resultant PCM files correspond to those original
+sources.  We must make sure that they are the same.
+
+#+begin_src sh :tangle code/get_audio_data.sh :shebang #!/bin/bash
+  mplayer -identify -frames 0 $1 | grep LENGTH\\\|RATE
+#+end_src
+
+
+#+begin_src sh :results output
+  echo "AV (lead) audio data / Galaxy Nexus"; echo "-----"
+  code/get_audio_data.sh data/salsa/20120308_av_jc/song2/av.wav
+  echo "--------------------"
+  echo "JC (follow) audio data / Nexus S"; echo "-----"
+  code/get_audio_data.sh data/salsa/20120308_av_jc/song2/jc.wav
+#+end_src
+
+#+results:
+#+begin_example
+AV (lead) audio data / Galaxy Nexus
+-----
+ID_AUDIO_BITRATE=176400
+ID_AUDIO_RATE=0
+ID_LENGTH=155.00
+ID_AUDIO_BITRATE=176400
+ID_AUDIO_RATE=22050
+--------------------
+JC (follow) audio data / Nexus S
+-----
+ID_AUDIO_BITRATE=128000
+ID_AUDIO_RATE=0
+ID_LENGTH=136.00
+ID_AUDIO_BITRATE=128000
+ID_AUDIO_RATE=16000
+#+end_example
+
+#+begin_src sh :results output
+  dir=data/salsa/20120308_av_jc/song2
+  for f in $dir/*.wav; do echo "$f $(code/get_audio_data.sh $f | tail -n1)"; done
+#+end_src
+
+#+results:
+: data/salsa/20120308_av_jc/song2/av.wav ID_AUDIO_RATE=22050
+: data/salsa/20120308_av_jc/song2/jc.wav ID_AUDIO_RATE=16000
+: data/salsa/20120308_av_jc/song2/vid2.wav ID_AUDIO_RATE=44100
+
+Here, we re sample av.wav and vid2.wav:
+
+#+begin_src sh :tangle code/resample_wavs.sh :shebang #!/bin/bash
+  RATE_DEFAULT=16000
+  if [ $# -lt 1 ]; then echo "Usage: $0 wav_dir [target rate in Hz]"; fi
+  if [ $# -lt 2 ]; then rate_out=$RATE_DEFAULT; else rate_out=$2; fi
+  dir=$1
+  dir_orig=$dir/orig_wavs
+  for f in $dir/*.wav; do
+      rate=$(code/get_audio_data.sh $f | tail -n1 | sed 's/ID_AUDIO_RATE=//g')
+      if [ $rate -ne $rate_out ]; then
+          mkdir $dir_orig 2>/dev/null
+          mv $f $dir_orig
+          echo "resampling $(basename $f) from $rate to $rate_out Hz"
+          sox $dir_orig/$(basename $f) $dir/$(basename $f) rate -h $rate_out
+      fi
+  done
+#+end_src
+
+#+begin_src sh
+  code/resample_wavs.sh data/salsa/20120308_av_jc/song2/
+#+end_src
+
+#+results:
+
+Make sure the rates are the same now:
+
+#+begin_src sh :results output
+  dir=data/salsa/20120308_av_jc/song2
+  for f in $dir/*.wav; do echo "$f $(code/get_audio_data.sh $f | tail -n1)"; done
+#+end_src
+
+#+results:
+: data/salsa/20120308_av_jc/song2/av.wav ID_AUDIO_RATE=16000
+: data/salsa/20120308_av_jc/song2/jc.wav ID_AUDIO_RATE=16000
+: data/salsa/20120308_av_jc/song2/vid2.wav ID_AUDIO_RATE=16000
+
+Signal alignment problems: studying the reference "bump"
+Audio data has peaks at 4102 (JC) and 6418 (AV) ms
+(in aligned data, where 2325 ms were skipped from AV, it's 
+4102 and 4092. Splitting the diff., let's say aligned audio peak is at 4097).
+Raw accel. data has peaks at 3900 (JC) and 6145 (AV)
+this means that need to delay JC data by 197 ms
+need to delay AV /raw/ data by 2325 + 277 = 2602 ms 
+(at it stands, AV/JC are 277/197 ms ahead of the music).
+
+di1 = align_data(di1, -277); 
+di2 = align_data(di2, -197);
+
+padding 23991.8 ms of vid2 means that in avidemux we should cut from whatever
+frame corresponds to 23.992 ms
+
+Now run Matlab scripts:
+#+begin_src matlab :tangle data/salsa/20120308_av_jc/song2/run_an.m :padline no
+  addpath('/home/leo/projects/dance_science/expt/code/');
+  cd('/home/leo/projects/dance_science/expt/data/salsa/20120308_av_jc/song2');
+  
+  % data and audio files (NB: don't include .wav extensions)
+  [f_lead, f_follow, f_lead_audio, f_follow_audio, f_camera_audio] ...
+      = deal('av', 'jc', 'av', 'jc', 'vid2');
+  
+  fname_vid = 'av_jc_song2_d1.avi'
+  nthx2 = 7;  % need to manually override the ACF peak (pick second max,
+              %  which shows at index 7 of the reverse-sorted index array)
+  % to pop into the align_audio fn and examine the xcorr functions, use 
+  % dbstop at 29 in align_audio (followed by dbquit, dbclear all)
+  run analysis_main
+  run vid_3panel
+#+end_src
+
+* Swing
+** Reproduce the March 6 LA/BR video with new code
+
+This will use shell scripts tangled earlier in the buffer.
+
+#+begin_src sh :results output
+  dir=data/swing/20120306_la_br/song2
+  for f in $dir/*.wav; do echo "$f $(code/get_audio_data.sh $f | tail -n1)"; done
+#+end_src
+
+#+results:
+: data/swing/20120306_la_br/song2/br-test1.wav ID_AUDIO_RATE=16000
+: data/swing/20120306_la_br/song2/la-test1.wav ID_AUDIO_RATE=22050
+: data/swing/20120306_la_br/song2/test1-vid.wav ID_AUDIO_RATE=44100
+
+#+begin_src sh
+  code/resample_wavs.sh data/swing/20120306_la_br/song2
+#+end_src
+
+#+results:
+| resampling | la-test1.wav  | from | 22050 | to | 16000 | Hz |
+| resampling | test1-vid.wav | from | 44100 | to | 16000 | Hz |
+
+Make sure the rates are the same now:
+
+#+begin_src sh :results output
+  dir=data/swing/20120306_la_br/song2
+  for f in $dir/*.wav; do echo "$f $(code/get_audio_data.sh $f | tail -n1)"; done
+#+end_src
+
+#+results:
+: data/swing/20120306_la_br/song2/br-test1.wav ID_AUDIO_RATE=16000
+: data/swing/20120306_la_br/song2/br-test1_aligned.wav ID_AUDIO_RATE=16000
+: data/swing/20120306_la_br/song2/la-test1.wav ID_AUDIO_RATE=16000
+: data/swing/20120306_la_br/song2/la-test1_aligned.wav ID_AUDIO_RATE=16000
+: data/swing/20120306_la_br/song2/test1-vid.wav ID_AUDIO_RATE=16000
+: data/swing/20120306_la_br/song2/test1-vid_aligned.wav ID_AUDIO_RATE=16000
+
+
+
+Matlab analysis
+#+begin_src matlab
+addpath('/home/leo/projects/dance_science/expt/code/');
+cd('/home/leo/projects/dance_science/expt/data/swing/20120306_la_br/song2');
+
+% data and audio files (NB: don't include .wav extensions)
+f_lead = 'la-test1';
+f_follow = 'br-test1';
+f_lead_audio = 'la-test1';
+f_follow_audio = 'br-test1';
+f_camera_audio = 'test1-vid';
+nthx2 = 1;
+run analysis_main
+fname_vid = 'la_br_song2_d1.avi';
+#+end_src
